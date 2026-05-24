@@ -1,0 +1,45 @@
+@startuml sequence_diagram_orders_cache
+title MES: чтение списка заказов и смена статуса (Cache-Aside, Redis)
+
+skinparam shadowing false
+skinparam noteBackgroundColor #FFF8B0
+
+actor "Operator" as OP
+participant "MES API" as API
+database "Redis" as REDIS
+database "MES db" as DB
+
+== Чтение списка заказов ==
+
+OP -> API : GET /orders?status=APPROVED&page=1
+API -> REDIS : GET mes:orders:list:status=APPROVED:page=1
+
+alt cache hit
+    REDIS --> API : список
+else cache miss
+    REDIS --> API : nil
+    API -> DB : SELECT ... WHERE status='APPROVED'
+    DB --> API : список
+    API -> REDIS : SET ключ <value> EX 60
+end
+
+API --> OP : 200 OK
+
+== Смена статуса заказа ==
+
+OP -> API : POST /orders/X/status { to: STARTED }
+API -> DB : UPDATE orders SET status='STARTED' WHERE id=X
+DB --> API : ok
+
+note right of API
+  Программная инвалидация по ключу:
+  удаляем кеш списков обоих
+  затронутых статусов.
+  TTL=60s страхует на случай пропуска.
+end note
+
+API -> REDIS : DEL mes:orders:list:status=APPROVED:*
+API -> REDIS : DEL mes:orders:list:status=STARTED:*
+API --> OP : 200 OK
+
+@enduml
